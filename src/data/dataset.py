@@ -73,3 +73,17 @@ class ObjectDetectionDataset(Dataset):
     def _get_number_of_positive_negative_entries(self) -> Tuple[int, int]:
         positive, negative = split_entries_positive_negative(self.entries)
         return len(positive), len(negative)
+    
+    def describe(self, name: str) -> str:
+        objects_per_entry = [len(entry.annotations)for entry in self.entries]
+        total_objects = sum(objects_per_entry)
+
+        description = f"Number {name} of entries: " \
+        + f"{len(self.entries)} | " \
+        + f"positive {self.num_positive} | " \
+        + f"negative {self.num_negative} | " \
+        + f"objects {total_objects} | " \
+        + f"max objects {max(objects_per_entry)} | " \
+        + f"avg objects {total_objects / self.num_positive:.2f}"
+
+        return description

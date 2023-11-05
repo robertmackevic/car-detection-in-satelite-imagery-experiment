@@ -93,8 +93,7 @@ class Trainer:
         self.model.train()
 
         for batch in tqdm(self.train_dl):
-            losses, _ = self._forward(batch)
-            loss, *_ = losses
+            loss, _ = self._forward(batch)
             loss.backward()
             self.optimizer.step()
 
@@ -151,7 +150,7 @@ class Trainer:
             self._log_epoch(epoch, mode="eval", mean_ap=mean_ap)
 
     def _forward(self, batch: Tensor
-        ) -> Tuple[Tuple[Tensor, Tensor, Tensor, Tensor, Tensor], Tensor]:
+        ) -> Tuple[Tensor, Tensor]:
         self.optimizer.zero_grad()
 
         source = batch[0].to(self.device)
@@ -160,8 +159,9 @@ class Trainer:
         output = self.model(source)
         losses = self.criterion(output, target)
         
-        self._log_losses(losses)        
-        return losses, output
+        self._log_losses(losses)
+        loss, *_ = losses  
+        return loss, output
 
     def _log_losses(self, losses: Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]) -> None:
         loss, box_loss, object_loss, no_object_loss, class_loss = losses
