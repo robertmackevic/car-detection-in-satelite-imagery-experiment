@@ -1,11 +1,11 @@
 import random
-import numpy as np
-import cv2 as cv
-
 from dataclasses import dataclass
-from typing import Tuple, List
-from pathlib import Path
 from os import listdir
+from pathlib import Path
+from typing import Tuple, List
+
+import cv2 as cv
+import numpy as np
 
 IMAGE_FORMAT_SUFFIX = ".jpg"
 ANNOTATION_FORMAT_SUFFIX = ".txt"
@@ -17,6 +17,7 @@ class YoloBbox:
     y: float
     width: float
     height: float
+
 
 @dataclass(frozen=True)
 class Annotation:
@@ -53,12 +54,12 @@ class ImageEntry:
         """
         annotations: List[Annotation] = []
         annotations_filepath = image_filepath.with_suffix(ANNOTATION_FORMAT_SUFFIX)
-              
+
         if annotations_filepath.is_file():
             with open(annotations_filepath, "r") as file:
                 for line in file:
                     annotations.append(Annotation.from_yolo_annotation(line))
-        
+
         bgr_image = cv.imread(str(image_filepath))
         rgb_image = cv.cvtColor(bgr_image, cv.COLOR_BGR2RGB)
         image = np.asarray(rgb_image)
@@ -79,21 +80,21 @@ def read_entries_from_directory(data_dir: Path) -> List[ImageEntry]:
 
         if filepath.suffix == IMAGE_FORMAT_SUFFIX:
             entries.append(ImageEntry.from_image_filepath(filepath))
-    
+
     return entries
+
 
 def split_entries_train_val_test(
         entries: List[ImageEntry],
         val_fraction: float = .1,
         test_fraction: float = .1,
         seed: int = None,
-    )-> Tuple[List[ImageEntry], List[ImageEntry], List[ImageEntry]]:
-    
+) -> Tuple[List[ImageEntry], List[ImageEntry], List[ImageEntry]]:
     if test_fraction + val_fraction >= 1.0:
         raise ValueError("Error: test_fraction + val_fraction >= 1.0")
 
     positive_entries, negative_entries = split_entries_positive_negative(entries)
-    
+
     num_val_pos_entries = int(len(positive_entries) * val_fraction)
     num_val_neg_entries = int(len(negative_entries) * val_fraction)
 
@@ -108,11 +109,11 @@ def split_entries_train_val_test(
     random.shuffle(val_set)
 
     test_set = positive_entries[num_val_pos_entries:num_val_pos_entries + num_test_pos_entries] + \
-        negative_entries[num_val_neg_entries:num_val_neg_entries + num_test_neg_entries]
+               negative_entries[num_val_neg_entries:num_val_neg_entries + num_test_neg_entries]
     random.shuffle(test_set)
 
     train_set = positive_entries[num_val_pos_entries + num_test_pos_entries:] + \
-        negative_entries[num_val_neg_entries + num_test_neg_entries:]
+                negative_entries[num_val_neg_entries + num_test_neg_entries:]
     random.shuffle(train_set)
 
     return train_set, val_set, test_set

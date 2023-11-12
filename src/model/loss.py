@@ -1,6 +1,6 @@
-import torch
-
 from typing import Dict, Any, Tuple
+
+import torch
 from torch import Tensor
 from torch.nn import Module, MSELoss
 
@@ -31,9 +31,9 @@ class YoloLoss(Module):
             intersection_over_union(
                 prediction=predictions[..., bbox_idx_start + (5 * i):bbox_idx_end + (5 * i)],
                 target=target[..., bbox_idx_start:bbox_idx_end]
-                ).unsqueeze(0)
+            ).unsqueeze(0)
             for i in range(self.num_boxes)
-        ], dim=0) 
+        ], dim=0)
 
         bestbox = torch.argmax(ious, dim=0)
         object_exists = target[..., self.num_classes].unsqueeze(3)
@@ -51,7 +51,8 @@ class YoloLoss(Module):
 
         box_targets = object_exists * target[..., bbox_idx_start:bbox_idx_end]
 
-        box_predictions[..., 2:4] = torch.sign(box_predictions[..., 2:4]) * torch.sqrt(torch.abs(box_predictions[..., 2:4] + 1e-6))
+        box_predictions[..., 2:4] = torch.sign(box_predictions[..., 2:4]) * torch.sqrt(
+            torch.abs(box_predictions[..., 2:4] + 1e-6))
         box_targets[..., 2:4] = torch.sqrt(box_targets[..., 2:4])
 
         box_loss = self.mse(
@@ -88,18 +89,18 @@ class YoloLoss(Module):
                     start_dim=1
                 )
             )
-        
+
         # CLASS LOSS
         class_loss = self.mse(
-            torch.flatten(object_exists * predictions[..., :self.num_classes], end_dim=-2,),
-            torch.flatten(object_exists * target[..., :self.num_classes], end_dim=-2,),
+            torch.flatten(object_exists * predictions[..., :self.num_classes], end_dim=-2, ),
+            torch.flatten(object_exists * target[..., :self.num_classes], end_dim=-2, ),
         )
 
         loss = (
-            self.lambda_coord * box_loss
-            + object_loss
-            + self.lambda_noobj * no_object_loss
-            + class_loss
+                self.lambda_coord * box_loss
+                + object_loss
+                + self.lambda_noobj * no_object_loss
+                + class_loss
         )
 
         return loss, box_loss, object_loss, no_object_loss, class_loss

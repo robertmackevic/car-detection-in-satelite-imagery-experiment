@@ -1,4 +1,5 @@
 from typing import Dict, Any, Tuple
+
 from torch import Tensor
 from torch.nn import (
     Module,
@@ -51,7 +52,7 @@ class Yolo(Module):
                 _, ksize, out_channels, stride, padding = layer
                 layers.append(Conv(in_channels, out_channels, ksize, stride, padding))
                 in_channels = out_channels
-            
+
             elif layer_type == "M":
                 _, ksize, stride = layer
                 layers.append(MaxPool2d(ksize, stride))
@@ -66,18 +67,18 @@ class Yolo(Module):
                     ksize, out_channels, stride, padding = conv2
                     layers.append(Conv(in_channels, out_channels, ksize, stride, padding))
                     in_channels = out_channels
-                
+
             else:
                 raise ValueError(f"Unknown layer type: {layer_type}")
-            
+
         return Sequential(*layers), in_channels
 
     def _create_fc(self, in_channels: int) -> Sequential:
-        num_cells = self.config["splits"]**2
+        num_cells = self.config["splits"] ** 2
         num_boxes = self.config["boxes"]
         num_classes = self.config["classes"]
         dropout = self.config["dropout"]
-        linear_features = 496 # Value in original paper 4096
+        linear_features = 496  # Value in original paper 4096
 
         return Sequential(
             Flatten(),

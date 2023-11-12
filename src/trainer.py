@@ -1,19 +1,19 @@
-import torch
 import logging
-
 from collections import Counter
 from os import makedirs, listdir
-from typing import Dict, Any, Optional, Tuple, List
 from pathlib import Path
-from tqdm import tqdm
+from typing import Dict, Any, Optional, Tuple, List
+
+import torch
 from torch import Tensor
 from torch.nn import Module
 from torch.optim import Adam
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard.writer import SummaryWriter
+from tqdm import tqdm
 
-from src.model.yolo import Yolo
 from src.model.loss import YoloLoss
+from src.model.yolo import Yolo
 from src.utils import (
     save_checkpoint,
     load_checkpoint,
@@ -65,7 +65,7 @@ class Trainer:
             self.model = load_checkpoint(checkpoint_path, self.model)
             self.logger.info("Model loader from checkpoint")
         self.logger.info(f"Number of trainable parameters: {count_parameters(self.model)}")
-        self.tensorboard = SummaryWriter(self.tensorboard_dir / f"v{len(listdir(self.tensorboard_dir))}")
+        self.tensorboard = SummaryWriter(str(self.tensorboard_dir / f"v{len(listdir(self.tensorboard_dir))}"))
 
         self.train_dl, self.val_dl, self.test_dl = dataloaders
         self.best_score = 0
@@ -88,6 +88,7 @@ class Trainer:
                 self.evaluate(self.val_dl, epoch)
 
         self.tensorboard.close()
+        return self.model
 
     def _train(self, epoch: int) -> None:
         self.model.train()
@@ -114,7 +115,7 @@ class Trainer:
 
             with torch.no_grad():
                 _, output = self._forward(batch)
-            
+
             target_bboxes = self.cellboxes_to_boxes(target)
             predicted_bboxes = self.cellboxes_to_boxes(output)
 
@@ -143,14 +144,14 @@ class Trainer:
             if self.best_score < mean_ap:
                 save_checkpoint(self.save_dir / "checkpoint_best_map.pth", self.model)
                 self.best_score = mean_ap
-        
+
             if epoch % self.checkpoint_interval == 0:
                 save_checkpoint(self.save_dir / f"checkpoint_{epoch}.pth", self.model)
 
             self._log_epoch(epoch, mode="eval", mean_ap=mean_ap)
 
     def _forward(self, batch: Tensor
-        ) -> Tuple[Tensor, Tensor]:
+                 ) -> Tuple[Tensor, Tensor]:
         self.optimizer.zero_grad()
 
         source = batch[0].to(self.device)
@@ -158,9 +159,9 @@ class Trainer:
 
         output = self.model(source)
         losses = self.criterion(output, target)
-        
+
         self._log_losses(losses)
-        loss, *_ = losses  
+        loss, *_ = losses
         return loss, output
 
     def _log_losses(self, losses: Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]) -> None:
@@ -180,7 +181,7 @@ class Trainer:
             mean = sum(values) / len(values)
             message += f"{metric}: {mean:.3f} "
             self.tensorboard.add_scalar(f"{metric}/{mode}", mean, epoch)
-        
+
         self.logger.info(message)
 
         if mean_ap is not None:
@@ -199,21 +200,22 @@ class Trainer:
             all_bboxes.append(bboxes)
 
         return all_bboxes
-    
+
     def convert_cellboxes(self, cells: Tensor) -> Tensor:
         cells = cells.to("cpu")
         batch_size = cells.shape[0]
 
         cells = cells.reshape(batch_size, self.num_splits, self.num_splits, self.num_classes + self.num_boxes * 5)
-        bboxes = [cells[..., self.num_classes + 1 + (5 * i): self.num_classes + 5 + (5 * i)] for i in range(self.num_boxes)]
+        bboxes = [cells[..., self.num_classes + 1 + (5 * i): self.num_classes + 5 + (5 * i)] for i in
+                  range(self.num_boxes)]
 
         scores = torch.cat([
             cells[..., self.num_classes + (5 * i)].unsqueeze(0)
             for i in range(self.num_boxes)
-        ],dim=0)
+        ], dim=0)
 
         best_box = scores.argmax(0).unsqueeze(-1)
-        best_boxes = torch.zeros_like(bboxes[0]) 
+        best_boxes = torch.zeros_like(bboxes[0])
         for i in range(self.num_boxes):
             best_boxes += best_box.eq(i).float() * bboxes[i]
 
@@ -230,11 +232,11 @@ class Trainer:
         best_confidence = torch.max(
             torch.stack([
                 cells[..., self.num_classes + (5 * i)] for i in range(self.num_boxes)
-            ], dim=0),dim=0).values.unsqueeze(-1)
+            ], dim=0), dim=0).values.unsqueeze(-1)
 
         converted_preds = torch.cat((predicted_class, best_confidence, converted_bboxes), dim=-1)
         return converted_preds
-    
+
     def mean_average_precision(self, pred_boxes: List, true_boxes: List) -> float:
         epsilon = 1e-6
         aps = []
@@ -260,7 +262,7 @@ class Trainer:
             tp = torch.zeros((len(detections)))
             fp = torch.zeros((len(detections)))
             total_true_bboxes = len(ground_truths)
-            
+
             # If none exists for this class then we can safely skip
             if total_true_bboxes == 0:
                 continue
@@ -296,12 +298,12 @@ class Trainer:
             FP_cumsum = torch.cumsum(fp, dim=0)
 
             recalls = TP_cumsum / (total_true_bboxes + epsilon)
-            
+
             precisions = torch.divide(TP_cumsum, (TP_cumsum + FP_cumsum + epsilon))
             precisions = torch.cat((torch.tensor([1]), precisions))
-            
+
             recalls = torch.cat((torch.tensor([0]), recalls))
-            
+
             aps.append(torch.trapz(precisions, recalls))
 
         return sum(aps) / len(aps)

@@ -1,10 +1,10 @@
 import json
-import torch
-
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
-from torch.nn import Module
+
+import torch
 from torch import Tensor
+from torch.nn import Module
 
 
 def load_config(filepath: Path) -> Optional[Dict[str, Any]]:
@@ -21,20 +21,22 @@ def load_checkpoint(filepath: Path, model: Module) -> Module:
     model.load_state_dict(checkpoint["state_dict"])
     return model
 
+
 def save_checkpoint(filepath: Path, model: Module) -> None:
     torch.save(model.state_dict(), filepath)
 
 
+def _get_corners(midpoint_bbox: Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+    x1 = midpoint_bbox[..., 0:1] - midpoint_bbox[..., 2:3] / 2
+    y1 = midpoint_bbox[..., 1:2] - midpoint_bbox[..., 3:4] / 2
+    x2 = midpoint_bbox[..., 0:1] + midpoint_bbox[..., 2:3] / 2
+    y2 = midpoint_bbox[..., 1:2] + midpoint_bbox[..., 3:4] / 2
+    return x1, y1, x2, y2
+
+
 def intersection_over_union(prediction: Tensor, target: Tensor) -> Tensor:
-    def get_corners(midpoint_bbox: Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
-        x1 = midpoint_bbox[..., 0:1] - midpoint_bbox[..., 2:3] / 2
-        y1 = midpoint_bbox[..., 1:2] - midpoint_bbox[..., 3:4] / 2
-        x2 = midpoint_bbox[..., 0:1] + midpoint_bbox[..., 2:3] / 2
-        y2 = midpoint_bbox[..., 1:2] + midpoint_bbox[..., 3:4] / 2
-        return x1, y1, x2, y2
-    
-    pred_x1, pred_y1, pred_x2, pred_y2 = get_corners(prediction)
-    target_x1, target_y1, target_x2, target_y2 = get_corners(target)
+    pred_x1, pred_y1, pred_x2, pred_y2 = _get_corners(prediction)
+    target_x1, target_y1, target_x2, target_y2 = _get_corners(target)
 
     x1 = torch.max(pred_x1, target_x1)
     y1 = torch.max(pred_y1, target_y1)
