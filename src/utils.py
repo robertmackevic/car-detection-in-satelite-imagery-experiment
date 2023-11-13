@@ -19,7 +19,7 @@ def count_parameters(module: Module) -> int:
 
 def load_checkpoint(filepath: Path, model: Module) -> Module:
     checkpoint = torch.load(filepath)
-    model.load_state_dict(checkpoint["state_dict"])
+    model.load_state_dict(checkpoint)
     return model
 
 
@@ -74,35 +74,29 @@ def non_max_suppression(bboxes: List[List[float]], iou_threshold: float, thresho
     return bboxes_after_nms
 
 
-def mean_average_precision(
+def compute_metrics(
         pred_boxes: List,
-        true_boxes: List,
+        gt_boxes: List,
         iou_threshold: float,
         num_classes: int,
-) -> float:
+) -> Dict[str, float]:
     epsilon = 1e-6
-    aps = []
+    metrics_per_class = {}
 
-    for c in range(num_classes):
-        detections = []
-        ground_truths = []
+    for class_id in range(num_classes):
+        detections = [box for box in pred_boxes if box[1] == class_id]
+        ground_truths = [box for box in gt_boxes if box[1] == class_id]
 
-        for detection in pred_boxes:
-            if detection[1] == c:
-                detections.append(detection)
+        gt_box_per_entry_counter = dict(Counter([box[0] for box in ground_truths]))
 
-        for true_box in true_boxes:
-            if true_box[1] == c:
-                ground_truths.append(true_box)
-
-        amount_bboxes = Counter([gt[0] for gt in ground_truths])
-
-        for key, val in amount_bboxes.items():
-            amount_bboxes[key] = torch.zeros(val)
+        # Replace the count with a 0-vector
+        for key, value in gt_box_per_entry_counter.items():
+            gt_box_per_entry_counter[key] = torch.zeros(value)
 
         detections.sort(key=lambda x: x[2], reverse=True)
         tp = torch.zeros((len(detections)))
         fp = torch.zeros((len(detections)))
+        fn = torch.zeros((len(detections)))
         total_true_bboxes = len(ground_truths)
 
         # If none exists for this class then we can safely skip
@@ -110,13 +104,12 @@ def mean_average_precision(
             continue
 
         for detection_idx, detection in enumerate(detections):
-            ground_truth_img = [
-                bbox for bbox in ground_truths if bbox[0] == detection[0]
-            ]
+            entry_idx = detection[0]
+            entry_gt_boxes = [bbox for bbox in ground_truths if bbox[0] == entry_idx]
 
-            best_iou = 0
+            best_iou, best_gt_idx = 0, 0
 
-            for idx, gt in enumerate(ground_truth_img):
+            for gt_idx, gt in enumerate(entry_gt_boxes):
                 iou = intersection_over_union(
                     torch.tensor(detection[3:]),
                     torch.tensor(gt[3:]),
@@ -124,28 +117,59 @@ def mean_average_precision(
 
                 if iou > best_iou:
                     best_iou = iou
-                    best_gt_idx = idx
+                    best_gt_idx = gt_idx
 
             if best_iou > iou_threshold:
-                if amount_bboxes[detection[0]][best_gt_idx] == 0:
+                if gt_box_per_entry_counter[entry_idx][best_gt_idx] == 0:
                     tp[detection_idx] = 1
-                    amount_bboxes[detection[0]][best_gt_idx] = 1
+                    gt_box_per_entry_counter[entry_idx][best_gt_idx] = 1
                 else:
                     fp[detection_idx] = 1
-
             else:
-                fp[detection_idx] = 1
+                fn[detection_idx] = 1
 
-        TP_cumsum = torch.cumsum(tp, dim=0)
-        FP_cumsum = torch.cumsum(fp, dim=0)
+        tp_cum_sum = torch.cumsum(tp, dim=0)
+        fp_cum_sum = torch.cumsum(fp, dim=0)
+        fn_cum_sum = torch.cumsum(fn, dim=0)
 
-        recalls = TP_cumsum / (total_true_bboxes + epsilon)
-
-        precisions = torch.divide(TP_cumsum, (TP_cumsum + FP_cumsum + epsilon))
-        precisions = torch.cat((torch.tensor([1]), precisions))
-
+        recalls = torch.divide(tp_cum_sum, (tp_cum_sum + fn_cum_sum + epsilon))
         recalls = torch.cat((torch.tensor([0]), recalls))
 
-        aps.append(torch.trapz(precisions, recalls))
+        precisions = torch.divide(tp_cum_sum, (tp_cum_sum + fp_cum_sum + epsilon))
+        precisions = torch.cat((torch.tensor([1]), precisions))
 
-    return sum(aps) / len(aps)
+        ap = torch.trapz(precisions, recalls)
+
+        # Calculate F1 score
+        f1 = 2 * (precisions * recalls) / (precisions + recalls + epsilon)
+
+        # Store metrics for the class
+        metrics_per_class[class_id] = {
+            "AP": ap.item(),
+            "Precision": precisions[-1].item(),
+            "Recall": recalls[-1].item(),
+            "F1": f1[-1].item(),
+            "TP": tp_cum_sum[-1].item(),
+            "FP": fp_cum_sum[-1].item(),
+            "FN": fn_cum_sum[-1].item(),
+        }
+
+    aggregated_metrics = {
+        "mAP": _aggregate_mean(metrics_per_class, metric="AP"),
+        "Precision": _aggregate_mean(metrics_per_class, metric="Precision"),
+        "Recall": _aggregate_mean(metrics_per_class, metric="Recall"),
+        "F1": _aggregate_mean(metrics_per_class, metric="F1"),
+        "TP": _aggregate_sum(metrics_per_class, metric="TP"),
+        "FP": _aggregate_sum(metrics_per_class, metric="FP"),
+        "FN": _aggregate_sum(metrics_per_class, metric="FN"),
+    }
+
+    return aggregated_metrics
+
+
+def _aggregate_sum(metrics_per_class: Dict[int, Dict[str, Any]], metric: str) -> float:
+    return sum(metrics_per_class[class_id][metric] for class_id in metrics_per_class.keys())
+
+
+def _aggregate_mean(metrics_per_class: Dict[int, Dict[str, Any]], metric: str) -> float:
+    return _aggregate_sum(metrics_per_class, metric) / len(metrics_per_class.keys())

@@ -18,7 +18,7 @@ from src.utils import (
     load_checkpoint,
     count_parameters,
     non_max_suppression,
-    mean_average_precision,
+    compute_metrics,
 )
 
 
@@ -58,6 +58,7 @@ class Trainer:
         self.logger.info(f"Number of trainable parameters: {count_parameters(self.model)}")
 
         self.train_dl, self.val_dl, self.test_dl = dataloaders
+        self.best_score_metric = "mAP"
         self.best_score = 0
 
         self.detector = Detector(config, self.model)
@@ -81,7 +82,7 @@ class Trainer:
             loss.backward()
             self.optimizer.step()
 
-        self.logger.log_epoch(epoch, mode="train")
+        self.logger.log_epoch(mode="train", epoch=epoch)
 
     def evaluate(
             self,
@@ -126,18 +127,18 @@ class Trainer:
 
                 entry_idx += 1
 
-        mean_ap = mean_average_precision(all_predicted_boxes, all_target_boxes, iou_threshold, self.num_classes)
-        self.logger.info(f"mAP: {mean_ap}")
+        metrics = compute_metrics(all_predicted_boxes, all_target_boxes, iou_threshold, self.num_classes)
+        self.logger.log_epoch(mode="eval", epoch=epoch, metrics=metrics)
 
         if epoch is not None:
-            if self.best_score < mean_ap:
-                save_checkpoint(self.save_dir / "checkpoint_best_map.pth", self.model)
-                self.best_score = mean_ap
+            if self.best_score < metrics[self.best_score_metric]:
+                self.best_score = metrics[self.best_score_metric]
+                self.logger.info(f"Saving best model according to {self.best_score_metric}: {self.best_score:.3f}")
+                save_checkpoint(self.save_dir / f"checkpoint_best_{self.best_score_metric.lower()}.pth", self.model)
 
             if epoch % self.checkpoint_interval == 0:
+                self.logger.info(f"Saving checkpoint at epoch: {epoch}")
                 save_checkpoint(self.save_dir / f"checkpoint_{epoch}.pth", self.model)
-
-            self.logger.log_epoch(epoch, mode="eval", mean_ap=mean_ap)
 
     def _forward(self, batch: Tensor
                  ) -> Tuple[Tensor, Tensor]:

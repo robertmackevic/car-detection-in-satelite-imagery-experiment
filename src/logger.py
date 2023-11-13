@@ -1,7 +1,7 @@
 import logging
 from os import makedirs, listdir
 from pathlib import Path
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict, Any
 
 from torch import Tensor
 from torch.utils.tensorboard.writer import SummaryWriter
@@ -51,18 +51,24 @@ class Logger:
         self.logs["no_object_loss"].append(no_object_loss.item())
         self.logs["class_loss"].append(class_loss.item())
 
-    def log_epoch(self, epoch: int, mode: str, mean_ap: Optional[float] = None) -> None:
+    def log_epoch(self, mode: str, epoch: Optional[int] = None, metrics: Optional[Dict[str, Any]] = None) -> None:
         tensorboard = self.tensorboard_train if mode == "train" else self.tensorboard_eval
 
         message = ""
-        for metric, values in self.logs.items():
+        for loss, values in self.logs.items():
             mean = sum(values) / len(values)
-            message += f"{metric}: {mean:.3f} "
-            tensorboard.add_scalar(tag=metric, scalar_value=mean, global_step=epoch)
+            message += f"{loss}: {mean:.3f} "
+            if epoch is not None:
+                tensorboard.add_scalar(tag=loss, scalar_value=mean, global_step=epoch)
 
         self.info(message)
 
-        if mean_ap is not None:
-            tensorboard.add_scalar(f"mAP", mean_ap, epoch)
+        message = ""
+        for metric, values in metrics.items():
+            message += f"{metric}: {values:.3f} "
+            if epoch is not None:
+                tensorboard.add_scalar(tag=metric, scalar_value=values, global_step=epoch)
+
+        self.info(message)
 
         self._clear_logs()
