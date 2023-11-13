@@ -1,7 +1,6 @@
-from collections import Counter
 from os import makedirs
 from pathlib import Path
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Dict, Any, Optional, Tuple
 
 import torch
 from torch import Tensor
@@ -11,6 +10,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from src.logger import Logger
+from src.model.detector import Detector
 from src.model.loss import YoloLoss
 from src.model.yolo import Yolo
 from src.utils import (
@@ -18,7 +18,7 @@ from src.utils import (
     load_checkpoint,
     count_parameters,
     non_max_suppression,
-    intersection_over_union
+    mean_average_precision,
 )
 
 
@@ -59,6 +59,8 @@ class Trainer:
 
         self.train_dl, self.val_dl, self.test_dl = dataloaders
         self.best_score = 0
+
+        self.detector = Detector(config, self.model)
 
     def fit(self) -> Module:
         for epoch in range(1, self.epochs + 1):
@@ -103,8 +105,8 @@ class Trainer:
             with torch.no_grad():
                 _, output = self._forward(batch)
 
-            target_bboxes = self.cellboxes_to_boxes(target)
-            predicted_bboxes = self.cellboxes_to_boxes(output)
+            target_bboxes = self.detector.cellboxes_to_boxes(target)
+            predicted_bboxes = self.detector.cellboxes_to_boxes(output)
 
             batch_size = source.shape[0]
 
@@ -124,7 +126,7 @@ class Trainer:
 
                 entry_idx += 1
 
-        mean_ap = self.mean_average_precision(all_predicted_boxes, all_target_boxes, iou_threshold)
+        mean_ap = mean_average_precision(all_predicted_boxes, all_target_boxes, iou_threshold, self.num_classes)
         self.logger.info(f"mAP: {mean_ap}")
 
         if epoch is not None:
@@ -150,129 +152,3 @@ class Trainer:
         self.logger.log_losses(losses)
         loss, *_ = losses
         return loss, output
-
-    def cellboxes_to_boxes(self, cells: Tensor) -> List[List[List[float]]]:
-        converted_pred = self.convert_cellboxes(cells).reshape(cells.shape[0], self.num_splits * self.num_splits, -1)
-        converted_pred[..., 0] = converted_pred[..., 0].long()
-        all_bboxes = []
-
-        for ex_idx in range(cells.shape[0]):
-            bboxes = []
-
-            for bbox_idx in range(self.num_splits * self.num_splits):
-                bboxes.append([x.item() for x in converted_pred[ex_idx, bbox_idx, :]])
-            all_bboxes.append(bboxes)
-
-        return all_bboxes
-
-    def convert_cellboxes(self, cells: Tensor) -> Tensor:
-        cells = cells.to("cpu")
-        batch_size = cells.shape[0]
-
-        cells = cells.reshape(batch_size, self.num_splits, self.num_splits, self.num_classes + self.num_boxes * 5)
-        bboxes = [cells[..., self.num_classes + 1 + (5 * i): self.num_classes + 5 + (5 * i)] for i in
-                  range(self.num_boxes)]
-
-        scores = torch.cat([
-            cells[..., self.num_classes + (5 * i)].unsqueeze(0)
-            for i in range(self.num_boxes)
-        ], dim=0)
-
-        best_box = scores.argmax(0).unsqueeze(-1)
-        best_boxes = torch.zeros_like(bboxes[0])
-        for i in range(self.num_boxes):
-            best_boxes += best_box.eq(i).float() * bboxes[i]
-
-        cell_indices = torch.arange(self.num_splits).repeat(batch_size, self.num_splits, 1).unsqueeze(-1)
-
-        x = 1 / self.num_splits * (best_boxes[..., :1] + cell_indices)
-        y = 1 / self.num_splits * (best_boxes[..., 1:2] + cell_indices.permute(0, 2, 1, 3))
-        w_y = 1 / self.num_splits * best_boxes[..., 2:4]
-
-        converted_bboxes = torch.cat((x, y, w_y), dim=-1)
-
-        predicted_class = cells[..., :self.num_classes].argmax(-1).unsqueeze(-1)
-
-        best_confidence = torch.max(
-            torch.stack([
-                cells[..., self.num_classes + (5 * i)] for i in range(self.num_boxes)
-            ], dim=0), dim=0).values.unsqueeze(-1)
-
-        converted_preds = torch.cat((predicted_class, best_confidence, converted_bboxes), dim=-1)
-        return converted_preds
-
-    def mean_average_precision(
-            self,
-            pred_boxes: List,
-            true_boxes: List,
-            iou_threshold: float,
-    ) -> float:
-        epsilon = 1e-6
-        aps = []
-
-        for c in range(self.num_classes):
-            detections = []
-            ground_truths = []
-
-            for detection in pred_boxes:
-                if detection[1] == c:
-                    detections.append(detection)
-
-            for true_box in true_boxes:
-                if true_box[1] == c:
-                    ground_truths.append(true_box)
-
-            amount_bboxes = Counter([gt[0] for gt in ground_truths])
-
-            for key, val in amount_bboxes.items():
-                amount_bboxes[key] = torch.zeros(val)
-
-            detections.sort(key=lambda x: x[2], reverse=True)
-            tp = torch.zeros((len(detections)))
-            fp = torch.zeros((len(detections)))
-            total_true_bboxes = len(ground_truths)
-
-            # If none exists for this class then we can safely skip
-            if total_true_bboxes == 0:
-                continue
-
-            for detection_idx, detection in enumerate(detections):
-                ground_truth_img = [
-                    bbox for bbox in ground_truths if bbox[0] == detection[0]
-                ]
-
-                best_iou = 0
-
-                for idx, gt in enumerate(ground_truth_img):
-                    iou = intersection_over_union(
-                        torch.tensor(detection[3:]),
-                        torch.tensor(gt[3:]),
-                    )
-
-                    if iou > best_iou:
-                        best_iou = iou
-                        best_gt_idx = idx
-
-                if best_iou > iou_threshold:
-                    if amount_bboxes[detection[0]][best_gt_idx] == 0:
-                        tp[detection_idx] = 1
-                        amount_bboxes[detection[0]][best_gt_idx] = 1
-                    else:
-                        fp[detection_idx] = 1
-
-                else:
-                    fp[detection_idx] = 1
-
-            TP_cumsum = torch.cumsum(tp, dim=0)
-            FP_cumsum = torch.cumsum(fp, dim=0)
-
-            recalls = TP_cumsum / (total_true_bboxes + epsilon)
-
-            precisions = torch.divide(TP_cumsum, (TP_cumsum + FP_cumsum + epsilon))
-            precisions = torch.cat((torch.tensor([1]), precisions))
-
-            recalls = torch.cat((torch.tensor([0]), recalls))
-
-            aps.append(torch.trapz(precisions, recalls))
-
-        return sum(aps) / len(aps)
