@@ -1,6 +1,5 @@
-import logging
 from collections import Counter
-from os import makedirs, listdir
+from os import makedirs
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple, List
 
@@ -9,9 +8,9 @@ from torch import Tensor
 from torch.nn import Module
 from torch.optim import Adam
 from torch.utils.data import DataLoader
-from torch.utils.tensorboard.writer import SummaryWriter
 from tqdm import tqdm
 
+from src.logger import Logger
 from src.model.loss import YoloLoss
 from src.model.yolo import Yolo
 from src.utils import (
@@ -32,15 +31,8 @@ class Trainer:
             save_dir: Path,
             checkpoint_path: Optional[Path]
     ) -> None:
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s [%(levelname)s]: %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        )
-        self.logger = logging.getLogger(__name__)
+        self.logger = Logger()
         self.device = device
-
-        self.model = Yolo(config).to(device)
 
         learning_rate = config["learning_rate"]
         self.num_splits = config["splits"]
@@ -48,46 +40,35 @@ class Trainer:
         self.num_classes = config["classes"]
         self.iou_threshold = config["iou_threshold"]
         self.conf_threshold = config["conf_threshold"]
-        self.optimizer = Adam(self.model.parameters(), lr=learning_rate)
-
-        self.criterion = YoloLoss(config)
-
-        self.save_dir = save_dir
-        self.tensorboard_dir = Path(".runs")
-        makedirs(self.save_dir, exist_ok=True)
-        makedirs(self.tensorboard_dir, exist_ok=True)
-
         self.epochs = config["epochs"]
         self.eval_interval = config["eval_interval"]
         self.checkpoint_interval = config["checkpoint_interval"]
 
+        self.model = Yolo(config).to(device)
+        self.optimizer = Adam(self.model.parameters(), lr=learning_rate)
+        self.criterion = YoloLoss(config)
+
+        self.save_dir = save_dir
+        makedirs(self.save_dir, exist_ok=True)
+
         if checkpoint_path is not None:
             self.model = load_checkpoint(checkpoint_path, self.model)
             self.logger.info("Model loader from checkpoint")
+
         self.logger.info(f"Number of trainable parameters: {count_parameters(self.model)}")
-        self.tensorboard = SummaryWriter(str(self.tensorboard_dir / f"v{len(listdir(self.tensorboard_dir))}"))
 
         self.train_dl, self.val_dl, self.test_dl = dataloaders
         self.best_score = 0
 
-        self.logs = {
-            "loss": [],
-            "box_loss": [],
-            "object_loss": [],
-            "no_object_loss": [],
-            "class_loss": [],
-        }
-
     def fit(self) -> Module:
         for epoch in range(1, self.epochs + 1):
-            self._clear_logs()
             self.logger.info(f"[Epoch {epoch} / {self.epochs}]")
             self._train(epoch)
 
             if epoch % self.eval_interval == 0:
-                self.evaluate(self.val_dl, epoch)
+                self.evaluate(self.val_dl, self.iou_threshold, self.conf_threshold, epoch)
 
-        self.tensorboard.close()
+        self.logger.close()
         return self.model
 
     def _train(self, epoch: int) -> None:
@@ -98,9 +79,15 @@ class Trainer:
             loss.backward()
             self.optimizer.step()
 
-        self._log_epoch(epoch, mode="train")
+        self.logger.log_epoch(epoch, mode="train")
 
-    def evaluate(self, dataloader: DataLoader, epoch: Optional[int] = None) -> None:
+    def evaluate(
+            self,
+            dataloader: DataLoader,
+            iou_threshold: float,
+            threshold: float,
+            epoch: Optional[int] = None,
+    ) -> None:
         self.model.eval()
 
         all_predicted_boxes = []
@@ -124,20 +111,20 @@ class Trainer:
             for idx in range(batch_size):
                 nms_boxes = non_max_suppression(
                     predicted_bboxes[idx],
-                    iou_threshold=self.iou_threshold,
-                    threshold=self.conf_threshold,
+                    iou_threshold=iou_threshold,
+                    threshold=threshold,
                 )
 
                 for nms_box in nms_boxes:
                     all_predicted_boxes.append([entry_idx] + nms_box)
 
                 for box in target_bboxes[idx]:
-                    if box[1] > self.conf_threshold:
+                    if box[1] > threshold:
                         all_target_boxes.append([entry_idx] + box)
 
                 entry_idx += 1
 
-        mean_ap = self.mean_average_precision(all_predicted_boxes, all_target_boxes)
+        mean_ap = self.mean_average_precision(all_predicted_boxes, all_target_boxes, iou_threshold)
         self.logger.info(f"mAP: {mean_ap}")
 
         if epoch is not None:
@@ -148,7 +135,7 @@ class Trainer:
             if epoch % self.checkpoint_interval == 0:
                 save_checkpoint(self.save_dir / f"checkpoint_{epoch}.pth", self.model)
 
-            self._log_epoch(epoch, mode="eval", mean_ap=mean_ap)
+            self.logger.log_epoch(epoch, mode="eval", mean_ap=mean_ap)
 
     def _forward(self, batch: Tensor
                  ) -> Tuple[Tensor, Tensor]:
@@ -160,34 +147,11 @@ class Trainer:
         output = self.model(source)
         losses = self.criterion(output, target)
 
-        self._log_losses(losses)
+        self.logger.log_losses(losses)
         loss, *_ = losses
         return loss, output
 
-    def _log_losses(self, losses: Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]) -> None:
-        loss, box_loss, object_loss, no_object_loss, class_loss = losses
-        self.logs["loss"].append(loss.item())
-        self.logs["box_loss"].append(box_loss.item())
-        self.logs["object_loss"].append(object_loss.item())
-        self.logs["no_object_loss"].append(no_object_loss.item())
-        self.logs["class_loss"].append(class_loss.item())
-
-    def _clear_logs(self) -> None:
-        self.logs = {key: [] for key, _ in self.logs.items()}
-
-    def _log_epoch(self, epoch: int, mode: str, mean_ap: Optional[float] = None) -> None:
-        message = ""
-        for metric, values in self.logs.items():
-            mean = sum(values) / len(values)
-            message += f"{metric}: {mean:.3f} "
-            self.tensorboard.add_scalar(f"{metric}/{mode}", mean, epoch)
-
-        self.logger.info(message)
-
-        if mean_ap is not None:
-            self.tensorboard.add_scalar(f"mAP", mean_ap, epoch)
-
-    def cellboxes_to_boxes(self, cells: Tensor) -> List[List[float]]:
+    def cellboxes_to_boxes(self, cells: Tensor) -> List[List[List[float]]]:
         converted_pred = self.convert_cellboxes(cells).reshape(cells.shape[0], self.num_splits * self.num_splits, -1)
         converted_pred[..., 0] = converted_pred[..., 0].long()
         all_bboxes = []
@@ -237,7 +201,12 @@ class Trainer:
         converted_preds = torch.cat((predicted_class, best_confidence, converted_bboxes), dim=-1)
         return converted_preds
 
-    def mean_average_precision(self, pred_boxes: List, true_boxes: List) -> float:
+    def mean_average_precision(
+            self,
+            pred_boxes: List,
+            true_boxes: List,
+            iou_threshold: float,
+    ) -> float:
         epsilon = 1e-6
         aps = []
 
@@ -284,7 +253,7 @@ class Trainer:
                         best_iou = iou
                         best_gt_idx = idx
 
-                if best_iou > self.iou_threshold:
+                if best_iou > iou_threshold:
                     if amount_bboxes[detection[0]][best_gt_idx] == 0:
                         tp[detection_idx] = 1
                         amount_bboxes[detection[0]][best_gt_idx] = 1
