@@ -63,12 +63,13 @@ class Logger:
 
         self.info(message)
 
-        message = ""
-        for metric, values in metrics.items():
-            message += f"{metric}: {values:.3f} "
-            if epoch is not None:
-                tensorboard.add_scalar(tag=metric, scalar_value=values, global_step=epoch)
+        if metrics is not None:
+            message = ""
+            for metric, values in metrics.items():
+                message += f"{metric}: {values:.3f} "
+                if epoch is not None:
+                    tensorboard.add_scalar(tag=metric, scalar_value=values, global_step=epoch)
 
-        self.info(message)
+            self.info(message)
 
         self._clear_logs()
