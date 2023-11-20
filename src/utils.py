@@ -128,9 +128,9 @@ def compute_metrics(
             else:
                 fn[detection_idx] = 1
 
-        tp_cum_sum = torch.cumsum(tp, dim=0)
-        fp_cum_sum = torch.cumsum(fp, dim=0)
-        fn_cum_sum = torch.cumsum(fn, dim=0)
+        tp_cum_sum = torch.cumsum(tp, dim=0) if tp.numel() != 0 else Tensor([0, ])
+        fp_cum_sum = torch.cumsum(fp, dim=0) if fp.numel() != 0 else Tensor([0, ])
+        fn_cum_sum = torch.cumsum(fn, dim=0) if fn.numel() != 0 else Tensor([0, ])
 
         recalls = torch.divide(tp_cum_sum, (tp_cum_sum + fn_cum_sum + epsilon))
         recalls = torch.cat((torch.tensor([0]), recalls))

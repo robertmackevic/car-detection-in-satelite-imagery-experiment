@@ -26,7 +26,7 @@ class Logger:
         makedirs(self.tensorboard_eval.log_dir, exist_ok=True)
 
         self.logs = {
-            "loss": [],
+            "total_loss": [],
             "box_loss": [],
             "object_loss": [],
             "no_object_loss": [],
@@ -45,7 +45,7 @@ class Logger:
 
     def log_losses(self, losses: Tuple[Tensor, ...]) -> None:
         loss, box_loss, object_loss, no_object_loss, class_loss = losses
-        self.logs["loss"].append(loss.item())
+        self.logs["total_loss"].append(loss.item())
         self.logs["box_loss"].append(box_loss.item())
         self.logs["object_loss"].append(object_loss.item())
         self.logs["no_object_loss"].append(no_object_loss.item())
@@ -59,7 +59,7 @@ class Logger:
             mean = sum(values) / len(values)
             message += f"{loss}: {mean:.3f} "
             if epoch is not None:
-                tensorboard.add_scalar(tag=loss, scalar_value=mean, global_step=epoch)
+                tensorboard.add_scalar(tag=f"losses/{loss}", scalar_value=mean, global_step=epoch)
 
         self.info(message)
 
@@ -68,7 +68,7 @@ class Logger:
             for metric, values in metrics.items():
                 message += f"{metric}: {values:.3f} "
                 if epoch is not None:
-                    tensorboard.add_scalar(tag=metric, scalar_value=values, global_step=epoch)
+                    tensorboard.add_scalar(tag=f"metrics/{metric}", scalar_value=values, global_step=epoch)
 
             self.info(message)
 
