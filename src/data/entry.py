@@ -13,7 +13,6 @@ ANNOTATION_FORMAT_SUFFIX = ".txt"
 
 @dataclass(frozen=True)
 class Annotation:
-    class_id: int
     x: float
     y: float
     width: float
@@ -23,7 +22,6 @@ class Annotation:
     def from_yolo_string(cls, line: str) -> "Annotation":
         parts = line.strip().split()
         return cls(
-            class_id=int(parts[0]),
             x=float(parts[1]),
             y=float(parts[2]),
             width=float(parts[3]),
@@ -136,7 +134,6 @@ def entry_to_patches(entry: ImageEntry, patch_size: int) -> List[ImageEntry]:
                     bbox_col_idx = int(bbox_x)
 
                     relative_annotation = Annotation(
-                        class_id=annotation.class_id,
                         x=bbox_x - bbox_col_idx,
                         y=bbox_y - bbox_row_idx,
                         width=annotation.width * image_size_in_patches,
@@ -179,7 +176,6 @@ def patches_to_entry(patches: List[ImageEntry]) -> ImageEntry:
             bbox_y = row_idx * patch_size + annotation.y * patch_size
 
             image_annotation = Annotation(
-                class_id=annotation.class_id,
                 x=bbox_x / image_size,
                 y=bbox_y / image_size,
                 width=annotation.width * patch_size / image_size,
@@ -196,12 +192,13 @@ def patches_to_entry(patches: List[ImageEntry]) -> ImageEntry:
     )
 
 
-def equalize_positive_negative_entries(entries: List[ImageEntry]) -> List[ImageEntry]:
+def equalize_negative_samples_with_positives(entries: List[ImageEntry]) -> List[ImageEntry]:
     positive, negative = split_entries_positive_negative(entries)
-    length = len(positive) if len(negative) > len(positive) else len(negative)
-    result = positive[:length] + negative[:length]
-    random.shuffle(result)
-    return result
+    if len(negative) > len(positive):
+        equalized = positive + negative[:len(positive)]
+        random.shuffle(equalized)
+        return equalized
+    return entries
 
 
 def split_entries_train_val_test(

@@ -1,5 +1,5 @@
 from dataclasses import replace
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 import torch
 from PIL import Image
@@ -16,8 +16,8 @@ class Detector:
         self.model = model
         self.num_x_cells, self.num_y_cells = config["grid"]
         self.num_cells = self.num_x_cells * self.num_y_cells
+
         self.boxes_per_cell = config["boxes_per_cell"]
-        self.num_classes = config["classes"]
         self.image_size = config["image_size"]
         self.iou_threshold = config["iou_threshold"]
 
@@ -26,7 +26,7 @@ class Detector:
             in_channels=config["in_channels"],
         )
 
-    def detect(self, entry: ImageEntry, threshold: float = .5) -> ImageEntry:
+    def detect(self, entry: ImageEntry, threshold: float = 0.5) -> ImageEntry:
         patches = entry_to_patches(entry, patch_size=self.image_size)
         source = torch.cat([self.transform(Image.fromarray(patch.image)).unsqueeze(0) for patch in patches], dim=0)
         batch_size = source.shape[0]
@@ -45,11 +45,10 @@ class Detector:
             annotations = []
             for bbox in nms_boxes:
                 annotations.append(Annotation(
-                    class_id=round(bbox[0]),
-                    x=bbox[2],
-                    y=bbox[3],
-                    width=bbox[4],
-                    height=bbox[5],
+                    x=bbox[1],
+                    y=bbox[2],
+                    width=bbox[3],
+                    height=bbox[4],
                 ))
 
             patches[idx] = replace(patches[idx], annotations=annotations)
@@ -57,39 +56,40 @@ class Detector:
         result = patches_to_entry(patches)
         return result
 
-    def cellboxes_to_boxes(self, cells: Tensor):
-        converted_pred = self.convert_cellboxes(cells).reshape(cells.shape[0], self.num_cells, -1)
+    def cellboxes_to_boxes(self, grid: Tensor) -> List:
+        converted_pred = self.convert_cellboxes(grid).reshape(grid.shape[0], self.num_cells, -1)
         converted_pred[..., 0] = converted_pred[..., 0].long()
         all_bboxes = []
 
-        for ex_idx in range(cells.shape[0]):
+        for score_idx in range(grid.shape[0]):
             bboxes = []
 
             for bbox_idx in range(self.num_cells):
-                bboxes.append([x.item() for x in converted_pred[ex_idx, bbox_idx, :]])
+                bboxes.append([x.item() for x in converted_pred[score_idx, bbox_idx, :]])
             all_bboxes.append(bboxes)
 
         return all_bboxes
 
-    def convert_cellboxes(self, cells: Tensor) -> Tensor:
-        cells = cells.to("cpu")
-        batch_size = cells.shape[0]
+    def convert_cellboxes(self, grid: Tensor) -> Tensor:
+        grid = grid.to("cpu")
+        batch_size = grid.shape[0]
 
-        cells = cells.reshape(
-            batch_size, self.num_y_cells, self.num_x_cells, self.num_classes + self.boxes_per_cell * 5)
+        grid = grid.reshape(
+            batch_size, self.num_y_cells, self.num_x_cells, self.boxes_per_cell * 5)
 
         bboxes = [
-            cells[..., self.num_classes + 1 + (5 * i): self.num_classes + 5 + (5 * i)]
+            grid[..., 1 + (5 * i): 5 + (5 * i)]
             for i in range(self.boxes_per_cell)
         ]
 
         scores = torch.cat([
-            cells[..., self.num_classes + (5 * i)].unsqueeze(0)
+            grid[..., 5 * i].unsqueeze(0)
             for i in range(self.boxes_per_cell)
         ], dim=0)
 
         best_box = scores.argmax(0).unsqueeze(-1)
         best_boxes = torch.zeros_like(bboxes[0])
+
         for i in range(self.boxes_per_cell):
             best_boxes += best_box.eq(i).float() * bboxes[i]
 
@@ -101,12 +101,9 @@ class Detector:
 
         converted_bboxes = torch.cat((x, y, w_y), dim=-1)
 
-        predicted_class = cells[..., :self.num_classes].argmax(-1).unsqueeze(-1)
-
         best_confidence = torch.max(
             torch.stack([
-                cells[..., self.num_classes + (5 * i)] for i in range(self.boxes_per_cell)
+                grid[..., 5 * i] for i in range(self.boxes_per_cell)
             ], dim=0), dim=0).values.unsqueeze(-1)
 
-        converted_preds = torch.cat((predicted_class, best_confidence, converted_bboxes), dim=-1)
-        return converted_preds
+        return torch.cat((best_confidence, converted_bboxes), dim=-1)

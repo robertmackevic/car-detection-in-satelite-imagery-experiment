@@ -30,7 +30,6 @@ class Logger:
             "box_loss": [],
             "object_loss": [],
             "no_object_loss": [],
-            "class_loss": [],
         }
 
     def info(self, message: str) -> None:
@@ -44,12 +43,11 @@ class Logger:
         self.logs = {key: [] for key, _ in self.logs.items()}
 
     def log_losses(self, losses: Tuple[Tensor, ...]) -> None:
-        loss, box_loss, object_loss, no_object_loss, class_loss = losses
+        loss, box_loss, object_loss, no_object_loss = losses
         self.logs["total_loss"].append(loss.item())
         self.logs["box_loss"].append(box_loss.item())
         self.logs["object_loss"].append(object_loss.item())
         self.logs["no_object_loss"].append(no_object_loss.item())
-        self.logs["class_loss"].append(class_loss.item())
 
     def log_epoch(self, mode: str, epoch: Optional[int] = None, metrics: Optional[Dict[str, Any]] = None) -> None:
         tensorboard = self.tensorboard_train if mode == "train" else self.tensorboard_eval

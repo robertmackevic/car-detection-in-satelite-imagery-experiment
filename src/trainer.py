@@ -5,6 +5,7 @@ from typing import Dict, Any, Optional, Tuple
 import torch
 from torch import Tensor
 from torch.nn import Module
+from torch.nn.utils import clip_grad_norm_
 from torch.optim import Adam
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -35,18 +36,18 @@ class Trainer:
         self.device = device
 
         learning_rate = config["learning_rate"]
-        self.num_classes = config["classes"]
         self.iou_threshold = config["iou_threshold"]
         self.conf_threshold = config["conf_threshold"]
         self.epochs = config["epochs"]
         self.eval_interval = config["eval_interval"]
         self.checkpoint_interval = config["checkpoint_interval"]
+        self.max_grad_norm = config["max_grad_norm"]
 
         self.model = Yolo(config).to(device)
         self.optimizer = Adam(self.model.parameters(), lr=learning_rate)
         self.criterion = YoloLoss(config)
 
-        self.save_dir = save_dir
+        self.save_dir = save_dir / self.logger.tensorboard_dir.name
         makedirs(self.save_dir, exist_ok=True)
 
         if checkpoint_path is not None:
@@ -56,7 +57,7 @@ class Trainer:
         self.logger.info(f"Number of trainable parameters: {count_parameters(self.model)}")
 
         self.train_dl, self.val_dl, self.test_dl = dataloaders
-        self.best_score_metric = "mAP"
+        self.best_score_metric = "F1"
         self.best_score = 0
 
         self.detector = Detector(config, self.model)
@@ -78,6 +79,7 @@ class Trainer:
         for batch in tqdm(self.train_dl):
             loss, _ = self._forward(batch)
             loss.backward()
+            clip_grad_norm_(self.model.parameters(), max_norm=self.max_grad_norm)
             self.optimizer.step()
 
         self.logger.log_epoch(mode="train", epoch=epoch)
@@ -108,7 +110,6 @@ class Trainer:
             predicted_bboxes = self.detector.cellboxes_to_boxes(output)
 
             batch_size = source.shape[0]
-
             for idx in range(batch_size):
                 nms_boxes = non_max_suppression(
                     predicted_bboxes[idx],
@@ -120,12 +121,12 @@ class Trainer:
                     all_predicted_boxes.append([entry_idx] + nms_box)
 
                 for box in target_bboxes[idx]:
-                    if box[1] > threshold:
+                    if box[0] > threshold:
                         all_target_boxes.append([entry_idx] + box)
 
                 entry_idx += 1
 
-        metrics = compute_metrics(all_predicted_boxes, all_target_boxes, iou_threshold, self.num_classes)
+        metrics = compute_metrics(all_predicted_boxes, all_target_boxes, iou_threshold)
         self.logger.log_epoch(mode="eval", epoch=epoch, metrics=metrics)
 
         if epoch is not None:

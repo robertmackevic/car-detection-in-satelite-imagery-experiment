@@ -77,7 +77,6 @@ class Yolo(Module):
         num_x_cells, num_y_cells = self.config["grid"]
         num_cells = num_x_cells * num_y_cells
         boxes_per_cell = self.config["boxes_per_cell"]
-        num_classes = self.config["classes"]
         dropout = self.config["dropout"]
         linear_features = 496  # Value in original paper 4096
 
@@ -86,5 +85,5 @@ class Yolo(Module):
             Linear(in_features=in_channels * num_cells, out_features=linear_features),
             Dropout(dropout),
             LeakyReLU(negative_slope=0.1),
-            Linear(in_features=linear_features, out_features=num_cells * (num_classes + boxes_per_cell * 5))
+            Linear(in_features=linear_features, out_features=num_cells * 5 * boxes_per_cell)
         )
