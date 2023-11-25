@@ -35,8 +35,6 @@ class Trainer:
         self.device = device
 
         learning_rate = config["learning_rate"]
-        self.num_splits = config["splits"]
-        self.num_boxes = config["boxes"]
         self.num_classes = config["classes"]
         self.iou_threshold = config["iou_threshold"]
         self.conf_threshold = config["conf_threshold"]

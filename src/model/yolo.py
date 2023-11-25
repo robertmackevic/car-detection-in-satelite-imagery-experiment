@@ -74,8 +74,9 @@ class Yolo(Module):
         return Sequential(*layers), in_channels
 
     def _create_fc(self, in_channels: int) -> Sequential:
-        num_cells = self.config["splits"] ** 2
-        num_boxes = self.config["boxes"]
+        num_x_cells, num_y_cells = self.config["grid"]
+        num_cells = num_x_cells * num_y_cells
+        boxes_per_cell = self.config["boxes_per_cell"]
         num_classes = self.config["classes"]
         dropout = self.config["dropout"]
         linear_features = 496  # Value in original paper 4096
@@ -85,5 +86,5 @@ class Yolo(Module):
             Linear(in_features=in_channels * num_cells, out_features=linear_features),
             Dropout(dropout),
             LeakyReLU(negative_slope=0.1),
-            Linear(in_features=linear_features, out_features=num_cells * (num_classes + num_boxes * 5))
+            Linear(in_features=linear_features, out_features=num_cells * (num_classes + boxes_per_cell * 5))
         )

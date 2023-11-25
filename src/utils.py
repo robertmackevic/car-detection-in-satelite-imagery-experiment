@@ -1,11 +1,25 @@
 import json
+import random
 from collections import Counter
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
 
+import cv2 as cv
+import numpy as np
 import torch
 from torch import Tensor
 from torch.nn import Module
+
+
+def seed_everything(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    cv.setRNGSeed(seed)
 
 
 def load_config(filepath: Path) -> Optional[Dict[str, Any]]:

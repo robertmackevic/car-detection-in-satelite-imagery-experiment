@@ -1,26 +1,61 @@
+from dataclasses import replace
 from typing import Dict, Any
 
 import torch
+from PIL import Image
 from torch import Tensor
 from torch.nn import Module
+
+from src.data.entry import ImageEntry, entry_to_patches, Annotation, patches_to_entry
+from src.data.transforms import get_inference_transform
+from src.utils import non_max_suppression
 
 
 class Detector:
     def __init__(self, config: Dict[str, Any], model: Module):
         self.model = model
-        self.num_splits = config["splits"]
-        self.num_cells = self.num_splits ** 2
-        self.num_boxes = config["boxes"]
+        self.num_x_cells, self.num_y_cells = config["grid"]
+        self.num_cells = self.num_x_cells * self.num_y_cells
+        self.boxes_per_cell = config["boxes_per_cell"]
         self.num_classes = config["classes"]
+        self.image_size = config["image_size"]
+        self.iou_threshold = config["iou_threshold"]
 
-    def detect(self, source: Tensor):
+        self.transform = get_inference_transform(
+            image_size=config["image_size"],
+            in_channels=config["in_channels"],
+        )
+
+    def detect(self, entry: ImageEntry, threshold: float = .5) -> ImageEntry:
+        patches = entry_to_patches(entry, patch_size=self.image_size)
+        source = torch.cat([self.transform(Image.fromarray(patch.image)).unsqueeze(0) for patch in patches], dim=0)
+        batch_size = source.shape[0]
+
         self.model.eval()
-
         with torch.no_grad():
-            _, output = self.model(source)
+            output = self.model(source)
 
         predicted_bboxes = self.cellboxes_to_boxes(output)
-        return predicted_bboxes
+        for idx in range(batch_size):
+            nms_boxes = non_max_suppression(
+                predicted_bboxes[idx],
+                iou_threshold=self.iou_threshold,
+                threshold=threshold,
+            )
+            annotations = []
+            for bbox in nms_boxes:
+                annotations.append(Annotation(
+                    class_id=round(bbox[0]),
+                    x=bbox[2],
+                    y=bbox[3],
+                    width=bbox[4],
+                    height=bbox[5],
+                ))
+
+            patches[idx] = replace(patches[idx], annotations=annotations)
+
+        result = patches_to_entry(patches)
+        return result
 
     def cellboxes_to_boxes(self, cells: Tensor):
         converted_pred = self.convert_cellboxes(cells).reshape(cells.shape[0], self.num_cells, -1)
@@ -40,25 +75,29 @@ class Detector:
         cells = cells.to("cpu")
         batch_size = cells.shape[0]
 
-        cells = cells.reshape(batch_size, self.num_splits, self.num_splits, self.num_classes + self.num_boxes * 5)
-        bboxes = [cells[..., self.num_classes + 1 + (5 * i): self.num_classes + 5 + (5 * i)] for i in
-                  range(self.num_boxes)]
+        cells = cells.reshape(
+            batch_size, self.num_y_cells, self.num_x_cells, self.num_classes + self.boxes_per_cell * 5)
+
+        bboxes = [
+            cells[..., self.num_classes + 1 + (5 * i): self.num_classes + 5 + (5 * i)]
+            for i in range(self.boxes_per_cell)
+        ]
 
         scores = torch.cat([
             cells[..., self.num_classes + (5 * i)].unsqueeze(0)
-            for i in range(self.num_boxes)
+            for i in range(self.boxes_per_cell)
         ], dim=0)
 
         best_box = scores.argmax(0).unsqueeze(-1)
         best_boxes = torch.zeros_like(bboxes[0])
-        for i in range(self.num_boxes):
+        for i in range(self.boxes_per_cell):
             best_boxes += best_box.eq(i).float() * bboxes[i]
 
-        cell_indices = torch.arange(self.num_splits).repeat(batch_size, self.num_splits, 1).unsqueeze(-1)
+        cell_indices = torch.arange(self.num_y_cells).repeat(batch_size, self.num_x_cells, 1).unsqueeze(-1)
 
-        x = 1 / self.num_splits * (best_boxes[..., :1] + cell_indices)
-        y = 1 / self.num_splits * (best_boxes[..., 1:2] + cell_indices.permute(0, 2, 1, 3))
-        w_y = 1 / self.num_splits * best_boxes[..., 2:4]
+        x = 1 / self.num_x_cells * (best_boxes[..., :1] + cell_indices)
+        y = 1 / self.num_y_cells * (best_boxes[..., 1:2] + cell_indices.permute(0, 2, 1, 3))
+        w_y = 1 / self.num_y_cells * best_boxes[..., 2:4]
 
         converted_bboxes = torch.cat((x, y, w_y), dim=-1)
 
@@ -66,7 +105,7 @@ class Detector:
 
         best_confidence = torch.max(
             torch.stack([
-                cells[..., self.num_classes + (5 * i)] for i in range(self.num_boxes)
+                cells[..., self.num_classes + (5 * i)] for i in range(self.boxes_per_cell)
             ], dim=0), dim=0).values.unsqueeze(-1)
 
         converted_preds = torch.cat((predicted_class, best_confidence, converted_bboxes), dim=-1)
