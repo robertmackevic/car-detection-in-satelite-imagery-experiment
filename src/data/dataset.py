@@ -4,13 +4,13 @@ import torch
 from PIL import Image
 from torch import Tensor
 from torch.utils.data import Dataset
+from torchvision.transforms import Compose
 
 from src.data.entry import ImageEntry
-from src.data.transforms import get_training_transform
 
 
 class ObjectDetectionDataset(Dataset):
-    def __init__(self, entries: List[ImageEntry], config: Dict[str, Any]) -> None:
+    def __init__(self, entries: List[ImageEntry], config: Dict[str, Any], transforms: Compose) -> None:
         self.entries = entries
         self.num_negative = sum(entry.is_negative for entry in entries)
         self.num_positive = len(entries) - self.num_negative
@@ -18,10 +18,7 @@ class ObjectDetectionDataset(Dataset):
         self.num_x_cells, self.num_y_cells = config["grid"]
         self.boxes_per_cell = config["boxes_per_cell"]
 
-        self.transform = get_training_transform(
-            image_size=config["image_size"],
-            in_channels=config["in_channels"],
-        )
+        self.transform = transforms
 
     def __len__(self) -> int:
         return len(self.entries)
@@ -58,7 +55,7 @@ class ObjectDetectionDataset(Dataset):
         objects_per_entry = [entry.num_objects for entry in self.entries]
         total_objects = sum(objects_per_entry)
 
-        description = f"Number {name} of entries: " \
+        description = f"Number of {name} entries: " \
                       + f"{len(self.entries)} | " \
                       + f"positive {self.num_positive} | " \
                       + f"negative {self.num_negative} | " \

@@ -38,10 +38,10 @@ class YoloLoss(Module):
         box_predictions = self._collect_predictions(predictions, best_box, start_idx=1, end_idx=5)
 
         # For boxes with no object in them, set box_predictions to 0
-        box_predictions = object_exists * box_predictions
-
         box_targets = object_exists * target[..., 1:5]
         box_targets[..., 2:4] = torch.sqrt(box_targets[..., 2:4])
+
+        box_predictions = object_exists * box_predictions
         box_predictions[..., 2:4] = (
                 torch.sign(box_predictions[..., 2:4]) *
                 torch.sqrt(torch.abs(box_predictions[..., 2:4] + 1e-6))

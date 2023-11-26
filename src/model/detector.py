@@ -61,11 +61,11 @@ class Detector:
         converted_pred[..., 0] = converted_pred[..., 0].long()
         all_bboxes = []
 
-        for score_idx in range(grid.shape[0]):
+        for batch_idx in range(grid.shape[0]):
             bboxes = []
 
             for bbox_idx in range(self.num_cells):
-                bboxes.append([x.item() for x in converted_pred[score_idx, bbox_idx, :]])
+                bboxes.append([x.item() for x in converted_pred[batch_idx, bbox_idx, :]])
             all_bboxes.append(bboxes)
 
         return all_bboxes
