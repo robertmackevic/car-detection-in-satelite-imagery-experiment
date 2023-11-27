@@ -107,6 +107,7 @@ def compute_metrics(
     detections.sort(key=lambda x: x[1], reverse=True)
     tps = torch.zeros((len(detections)))
     fps = torch.zeros((len(detections)))
+    ious = torch.zeros((len(detections)))
     total_true_bboxes = len(ground_truths)
 
     for detection_idx, detection in enumerate(detections):
@@ -124,6 +125,8 @@ def compute_metrics(
             if iou > best_iou:
                 best_iou = iou
                 best_gt_idx = gt_idx
+
+        ious[detection_idx] = best_iou
 
         if best_iou > iou_threshold:
             if gt_box_per_entry_counter[entry_idx][best_gt_idx] == 0:
@@ -148,6 +151,7 @@ def compute_metrics(
 
     metrics = {
         "AP": ap.item(),
+        "IoU": ious.mean().item(),
         "Precision": precisions[-1].item(),
         "Recall": recalls[-1].item(),
         "F1": f1[-1].item(),

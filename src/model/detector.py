@@ -17,7 +17,6 @@ class Detector:
         self.num_x_cells, self.num_y_cells = config["grid"]
         self.num_cells = self.num_x_cells * self.num_y_cells
 
-        self.boxes_per_cell = config["boxes_per_cell"]
         self.image_size = config["image_size"]
         self.iou_threshold = config["iou_threshold"]
 
@@ -74,36 +73,15 @@ class Detector:
         grid = grid.to("cpu")
         batch_size = grid.shape[0]
 
-        grid = grid.reshape(
-            batch_size, self.num_y_cells, self.num_x_cells, self.boxes_per_cell * 5)
-
-        bboxes = [
-            grid[..., 1 + (5 * i): 5 + (5 * i)]
-            for i in range(self.boxes_per_cell)
-        ]
-
-        scores = torch.cat([
-            grid[..., 5 * i].unsqueeze(0)
-            for i in range(self.boxes_per_cell)
-        ], dim=0)
-
-        best_box = scores.argmax(0).unsqueeze(-1)
-        best_boxes = torch.zeros_like(bboxes[0])
-
-        for i in range(self.boxes_per_cell):
-            best_boxes += best_box.eq(i).float() * bboxes[i]
-
+        grid = grid.reshape(batch_size, self.num_y_cells, self.num_x_cells, 5)
+        bboxes = grid[..., 1:5]
         cell_indices = torch.arange(self.num_y_cells).repeat(batch_size, self.num_x_cells, 1).unsqueeze(-1)
 
-        x = 1 / self.num_x_cells * (best_boxes[..., :1] + cell_indices)
-        y = 1 / self.num_y_cells * (best_boxes[..., 1:2] + cell_indices.permute(0, 2, 1, 3))
-        w_y = 1 / self.num_y_cells * best_boxes[..., 2:4]
+        x = 1 / self.num_x_cells * (bboxes[..., :1] + cell_indices)
+        y = 1 / self.num_y_cells * (bboxes[..., 1:2] + cell_indices.permute(0, 2, 1, 3))
+        w_y = 1 / self.num_y_cells * bboxes[..., 2:4]
 
         converted_bboxes = torch.cat((x, y, w_y), dim=-1)
+        confidence = grid[..., 0].unsqueeze(-1)
 
-        best_confidence = torch.max(
-            torch.stack([
-                grid[..., 5 * i] for i in range(self.boxes_per_cell)
-            ], dim=0), dim=0).values.unsqueeze(-1)
-
-        return torch.cat((best_confidence, converted_bboxes), dim=-1)
+        return torch.cat((confidence, converted_bboxes), dim=-1)

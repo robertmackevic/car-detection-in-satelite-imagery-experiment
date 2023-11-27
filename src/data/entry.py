@@ -192,12 +192,18 @@ def patches_to_entry(patches: List[ImageEntry]) -> ImageEntry:
     )
 
 
-def equalize_negative_samples_with_positives(entries: List[ImageEntry]) -> List[ImageEntry]:
+def equalize_negative_samples_with_positives(entries: List[ImageEntry], fraction: float = 1.0) -> List[ImageEntry]:
+    if fraction > 1.0 or fraction < 0:
+        raise ValueError("Fraction should be between 0 and 1.")
+
     positive, negative = split_entries_positive_negative(entries)
-    if len(negative) > len(positive):
-        equalized = positive + negative[:len(positive)]
+    num_positives = int(len(positive) * fraction)
+
+    if len(negative) > num_positives:
+        equalized = positive + negative[:num_positives]
         random.shuffle(equalized)
         return equalized
+
     return entries
 
 

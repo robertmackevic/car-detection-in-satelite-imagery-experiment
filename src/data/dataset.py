@@ -14,9 +14,7 @@ class ObjectDetectionDataset(Dataset):
         self.entries = entries
         self.num_negative = sum(entry.is_negative for entry in entries)
         self.num_positive = len(entries) - self.num_negative
-
         self.num_x_cells, self.num_y_cells = config["grid"]
-        self.boxes_per_cell = config["boxes_per_cell"]
 
         self.transform = transforms
 
@@ -27,7 +25,7 @@ class ObjectDetectionDataset(Dataset):
         image = Image.fromarray(self.entries[index].image)
         image = self.transform(image)
 
-        grid = torch.zeros((self.num_y_cells, self.num_x_cells, 5 * self.boxes_per_cell))
+        grid = torch.zeros((self.num_y_cells, self.num_x_cells, 5))
 
         for annotation in self.entries[index].annotations:
             x = self.num_x_cells * annotation.x

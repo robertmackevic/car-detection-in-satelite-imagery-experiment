@@ -28,6 +28,5 @@
     "lambda_coord": 2.0,
     "lambda_obj": 2.0,
     "dropout": 0.1,
-    "grid": [8, 8],
-    "boxes_per_cell": 1
+    "grid": [8, 8]
 }
