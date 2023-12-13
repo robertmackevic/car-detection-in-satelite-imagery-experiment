@@ -90,8 +90,21 @@ def plot_entry(
         figsize: Tuple[int, int] = DEFAULT_FIGSIZE1,
         color: Tuple[int, int, int] = COLOR_GREEN,
         linewidth: int = DEFAULT_LINEWIDTH,
+        grid_size: Optional[Tuple[int, int]] = None
 ) -> None:
     image = annotate_entry_image(entry, annotation_style, color, linewidth) if annotate else entry.image
     plt.figure(figsize=figsize)
     plt.imshow(image)
+
+    if grid_size is not None:
+        rows, cols = grid_size
+        rows_step = image.shape[0] // rows
+        cols_step = image.shape[1] // cols
+
+        for i in range(1, rows):
+            plt.axhline(i * rows_step, color="black", linewidth=linewidth)
+
+        for j in range(1, cols):
+            plt.axvline(j * cols_step, color="black", linewidth=linewidth)
+
     plt.show()

@@ -1,6 +1,5 @@
 from typing import Dict, Any
 
-import torch
 from torch import Tensor
 from torch.nn import (
     Module,
@@ -9,8 +8,8 @@ from torch.nn import (
     LeakyReLU,
     Sequential,
     ModuleList,
-    Upsample,
-    Sigmoid
+    Sigmoid,
+    Dropout
 )
 
 
@@ -48,28 +47,18 @@ class ResidualBlock(Module):
         return x
 
 
-class ScaleBlock(Module):
-
-    def __init__(self, in_channels: int) -> None:
-        super(ScaleBlock, self).__init__()
-        self.res = ResidualBlock(in_channels, use_residual=False, num_repeats=1)
-        self.conv = ConvBlock(in_channels, out_channels=in_channels // 2, stride=1, kernel_size=1, padding=0)
-
-    def forward(self, x: Tensor) -> Tensor:
-        x = self.res(x)
-        x = self.conv(x)
-        return x
-
-
 class PredictionBlock(Module):
-    def __init__(self, in_channels: int) -> None:
+    def __init__(self, in_channels: int, dropout: float) -> None:
         super(PredictionBlock, self).__init__()
-        hidden = in_channels * 2
+        hidden = in_channels // 2
 
         self.prediction = Sequential(
-            ConvBlock(in_channels, out_channels=hidden, stride=1, kernel_size=3, padding=1),
-            Conv2d(in_channels=hidden, out_channels=3, stride=1, kernel_size=1, padding=0),
-            Sigmoid()
+            ResidualBlock(in_channels, use_residual=False, num_repeats=1),
+            ConvBlock(in_channels, out_channels=hidden, stride=1, kernel_size=1, padding=0),
+            ConvBlock(hidden, out_channels=in_channels, stride=1, kernel_size=3, padding=1),
+            Conv2d(in_channels=in_channels, out_channels=3, stride=1, kernel_size=1, padding=0),
+            Dropout(p=dropout),
+            Sigmoid(),
         )
 
     def forward(self, x: Tensor) -> Tensor:
@@ -81,9 +70,10 @@ class Yolo(Module):
         super(Yolo, self).__init__()
         self.in_channels = config["in_channels"]
         self.architecture = config["architecture"]
+        self.dropout = config["dropout"]
         self.network = self._create_network()
 
-    def _create_network(self) -> ModuleList:
+    def _create_network(self) -> Sequential:
         layers = ModuleList()
         in_channels = self.in_channels
 
@@ -109,38 +99,13 @@ class Yolo(Module):
                     num_repeats=num_repeats,
                 ))
 
-            elif layer_type == "U":
-                _, scale_factor = layer
-                layers.append(Upsample(
-                    scale_factor=scale_factor,
-                ))
-                in_channels = in_channels * 3
-
-            elif layer_type == "S":
-                layers.append(ScaleBlock(
-                    in_channels=in_channels,
-                ))
-                in_channels = in_channels // 2
-
             elif layer_type == "P":
-                layers += [
-                    ScaleBlock(in_channels),
-                    PredictionBlock(in_channels=in_channels // 2)
-                ]
+                layers.append(PredictionBlock(
+                    in_channels=in_channels,
+                    dropout=self.dropout
+                ))
 
-        return layers
+        return Sequential(*layers)
 
     def forward(self, x: Tensor) -> Tensor:
-        route_connections = []
-
-        for layer in self.network:
-            x = layer(x)
-
-            if isinstance(layer, ResidualBlock) and layer.num_repeats == 8:
-                route_connections.append(x)
-
-            elif isinstance(layer, Upsample):
-                x = torch.cat([x, route_connections[-1]], dim=1)
-                route_connections.pop()
-
-        return x
+        return self.network(x)

@@ -27,10 +27,11 @@ class Logger:
 
         self.logs = {
             "total_loss": [],
-            "box_loss": [],
+            "coord_loss": [],
             "object_loss": [],
             "no_object_loss": [],
         }
+        self.loss_names = list(self.logs.keys())
 
     def info(self, message: str) -> None:
         self.logger.info(message)
@@ -43,13 +44,16 @@ class Logger:
         self.logs = {key: [] for key, _ in self.logs.items()}
 
     def log_losses(self, losses: Tuple[Tensor, ...]) -> None:
-        loss, box_loss, object_loss, no_object_loss = losses
-        self.logs["total_loss"].append(loss.item())
-        self.logs["box_loss"].append(box_loss.item())
-        self.logs["object_loss"].append(object_loss.item())
-        self.logs["no_object_loss"].append(no_object_loss.item())
+        for loss, loss_name in zip(losses, self.loss_names):
+            self.logs[loss_name].append(loss.item())
 
-    def log_epoch(self, mode: str, epoch: Optional[int] = None, metrics: Optional[Dict[str, Any]] = None) -> None:
+    def log_epoch(
+            self,
+            mode: str,
+            epoch: Optional[int] = None,
+            metrics: Optional[Dict[str, Any]] = None,
+            learning_rate: Optional[float] = None
+    ) -> None:
         tensorboard = self.tensorboard_train if mode == "train" else self.tensorboard_eval
 
         message = ""
@@ -60,6 +64,8 @@ class Logger:
                 tensorboard.add_scalar(tag=f"losses/{loss}", scalar_value=mean, global_step=epoch)
 
         self.info(message)
+        if learning_rate is not None:
+            tensorboard.add_scalar(tag="learning_rate", scalar_value=learning_rate, global_step=epoch)
 
         if metrics is not None:
             message = ""

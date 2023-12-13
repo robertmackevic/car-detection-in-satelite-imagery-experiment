@@ -5,7 +5,6 @@ from typing import Dict, Any, Optional, Tuple
 import torch
 from torch import Tensor
 from torch.nn import Module
-from torch.nn.utils import clip_grad_norm_
 from torch.optim import Adam
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -18,8 +17,9 @@ from src.utils import (
     save_checkpoint,
     load_checkpoint,
     count_parameters,
-    non_max_suppression,
+    count_layers,
     compute_metrics,
+    save_config,
 )
 
 
@@ -41,20 +41,22 @@ class Trainer:
         self.epochs = config["epochs"]
         self.eval_interval = config["eval_interval"]
         self.checkpoint_interval = config["checkpoint_interval"]
-        self.max_grad_norm = config["max_grad_norm"]
+        weight_decay = config["weight_decay"]
 
         self.model = Yolo(config).to(device)
-        self.optimizer = Adam(self.model.parameters(), lr=learning_rate)
+        self.optimizer = Adam(self.model.parameters(), lr=learning_rate, weight_decay=weight_decay)
         self.criterion = YoloLoss(config)
 
         self.save_dir = save_dir / self.logger.tensorboard_dir.name
         makedirs(self.save_dir, exist_ok=True)
+        save_config(config, self.save_dir / "config.json")
 
         if checkpoint_path is not None:
             self.model = load_checkpoint(checkpoint_path, self.model)
             self.logger.info("Model loader from checkpoint")
 
         self.logger.info(f"Number of trainable parameters: {count_parameters(self.model)}")
+        self.logger.info(f"Number of layers: {count_layers(self.model)}")
 
         self.train_dl, self.val_dl, self.test_dl = dataloaders
         self.best_score_metric = "F1"
@@ -79,10 +81,9 @@ class Trainer:
         for batch in tqdm(self.train_dl):
             loss, _ = self._forward(batch)
             loss.backward()
-            clip_grad_norm_(self.model.parameters(), max_norm=self.max_grad_norm)
             self.optimizer.step()
 
-        self.logger.log_epoch(mode="train", epoch=epoch)
+        self.logger.log_epoch(mode="train", epoch=epoch, learning_rate=self.optimizer.param_groups[0]["lr"])
 
     def evaluate(
             self,
@@ -98,32 +99,18 @@ class Trainer:
         entry_idx = 0
 
         for batch in tqdm(dataloader):
-            self.optimizer.zero_grad()
-
-            source = batch[0].to(self.device)
-            target = batch[1].to(self.device)
-
             with torch.no_grad():
                 _, output = self._forward(batch)
 
+            target = batch[1].to(self.device)
             target_bboxes = self.detector.cellboxes_to_boxes(target)
             predicted_bboxes = self.detector.cellboxes_to_boxes(output)
 
-            batch_size = source.shape[0]
+            batch_size = target.shape[0]
+
             for idx in range(batch_size):
-                nms_boxes = non_max_suppression(
-                    predicted_bboxes[idx],
-                    iou_threshold=iou_threshold,
-                    threshold=threshold,
-                )
-
-                for nms_box in nms_boxes:
-                    all_predicted_boxes.append([entry_idx] + nms_box)
-
-                for box in target_bboxes[idx]:
-                    if box[0] > threshold:
-                        all_target_boxes.append([entry_idx] + box)
-
+                all_predicted_boxes.extend([entry_idx] + box for box in predicted_bboxes[idx] if box[0] > threshold)
+                all_target_boxes.extend([entry_idx] + box for box in target_bboxes[idx] if box[0] > threshold)
                 entry_idx += 1
 
         metrics = compute_metrics(all_predicted_boxes, all_target_boxes, iou_threshold)
@@ -151,4 +138,5 @@ class Trainer:
 
         self.logger.log_losses(losses)
         loss, *_ = losses
+
         return loss, output

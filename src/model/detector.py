@@ -18,6 +18,7 @@ class Detector:
         self.num_cells = self.num_x_cells * self.num_y_cells
 
         self.image_size = config["image_size"]
+        self.anchor_width, self.anchor_height = config["anchor"]
         self.iou_threshold = config["iou_threshold"]
 
         self.transform = get_inference_transform(
@@ -56,32 +57,33 @@ class Detector:
         return result
 
     def cellboxes_to_boxes(self, grid: Tensor) -> List:
-        converted_pred = self.convert_cellboxes(grid).reshape(grid.shape[0], self.num_cells, -1)
-        converted_pred[..., 0] = converted_pred[..., 0].long()
+        cellboxes = self.extract_cellboxes(grid).reshape(grid.shape[0], self.num_cells, -1)
+        cellboxes[..., 0] = cellboxes[..., 0].long()
         all_bboxes = []
 
         for batch_idx in range(grid.shape[0]):
-            bboxes = []
+            bbox_batch = []
 
             for bbox_idx in range(self.num_cells):
-                bboxes.append([x.item() for x in converted_pred[batch_idx, bbox_idx, :]])
-            all_bboxes.append(bboxes)
+                bbox_batch.append([x.item() for x in cellboxes[batch_idx, bbox_idx, :]])
+            all_bboxes.append(bbox_batch)
 
         return all_bboxes
 
-    def convert_cellboxes(self, grid: Tensor) -> Tensor:
+    def extract_cellboxes(self, grid: Tensor) -> Tensor:
         grid = grid.to("cpu")
         batch_size = grid.shape[0]
 
-        grid = grid.reshape(batch_size, self.num_y_cells, self.num_x_cells, 5)
-        bboxes = grid[..., 1:5]
+        grid = grid.reshape(batch_size, self.num_y_cells, self.num_x_cells, 3)
+        centers = grid[..., 1:3]
         cell_indices = torch.arange(self.num_y_cells).repeat(batch_size, self.num_x_cells, 1).unsqueeze(-1)
 
-        x = 1 / self.num_x_cells * (bboxes[..., :1] + cell_indices)
-        y = 1 / self.num_y_cells * (bboxes[..., 1:2] + cell_indices.permute(0, 2, 1, 3))
-        w_y = 1 / self.num_y_cells * bboxes[..., 2:4]
+        x = 1 / self.num_x_cells * (centers[..., :1] + cell_indices)
+        y = 1 / self.num_y_cells * (centers[..., 1:2] + cell_indices.permute(0, 2, 1, 3))
+        w = torch.full_like(x, fill_value=self.anchor_width)
+        h = torch.full_like(y, fill_value=self.anchor_height)
 
-        converted_bboxes = torch.cat((x, y, w_y), dim=-1)
+        converted_bboxes = torch.cat((x, y, w, h), dim=-1)
         confidence = grid[..., 0].unsqueeze(-1)
 
         return torch.cat((confidence, converted_bboxes), dim=-1)

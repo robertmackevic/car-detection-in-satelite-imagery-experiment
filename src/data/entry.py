@@ -1,5 +1,5 @@
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from os import listdir
 from pathlib import Path
 from typing import Tuple, List, Optional
@@ -96,6 +96,53 @@ def read_entries_from_directory(
                 entries.append(entry)
 
     return entries
+
+
+def pre_process_entries(
+        entries: List[ImageEntry],
+        grid_size: Optional[Tuple[int, int]] = None,
+        negative_fraction: Optional[float] = None,
+) -> List[ImageEntry]:
+    if negative_fraction is not None:
+        entries = equalize_negative_samples_with_positives(entries, fraction=negative_fraction)
+    if grid_size is not None:
+        entries = remove_overlapping_entries(entries, grid_size)
+    return entries
+
+
+def remove_overlapping_entries(entries: List[ImageEntry], grid_size: Tuple[int, int]) -> List[ImageEntry]:
+    processed_entries: List[ImageEntry] = []
+
+    for entry in entries:
+        if entry.is_negative:
+            processed_entries.append(entry)
+            continue
+
+        grid: List[List[Optional[Annotation]]] = [[None for _ in range(grid_size[0])] for _ in range(grid_size[1])]
+        for annotation in entry.annotations:
+            x = grid_size[0] * annotation.x
+            y = grid_size[1] * annotation.y
+            cell_row = int(y)
+            cell_column = int(x)
+
+            if grid[cell_row][cell_column] is None:
+                grid[cell_row][cell_column] = annotation
+
+            else:
+                cell = grid[cell_row][cell_column]
+                x_is_similar = np.abs(annotation.x - cell.x) < 0.001
+                y_is_similar = np.abs(annotation.y - cell.y) < 0.001
+                # This means that it's a duplicate annotation and should be ignored
+                if x_is_similar and y_is_similar:
+                    continue
+                # If they are not similar, then it means that 2 annotations fall in the same cell.
+                break
+
+        else:
+            processed_annotations = [cell for row in grid for cell in row if cell is not None]
+            processed_entries.append(replace(entry, annotations=processed_annotations))
+
+    return processed_entries
 
 
 def entry_to_patches(entry: ImageEntry, patch_size: int) -> List[ImageEntry]:
