@@ -2,13 +2,15 @@ import json
 import random
 from collections import Counter
 from pathlib import Path
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, List, Tuple
 
 import cv2 as cv
 import numpy as np
 import torch
 from torch import Tensor
 from torch.nn import Module
+
+from src.paths import CONFIG_FILE
 
 
 def seed_everything(seed: int) -> None:
@@ -22,13 +24,22 @@ def seed_everything(seed: int) -> None:
     cv.setRNGSeed(seed)
 
 
-def load_config(filepath: Path) -> Optional[Dict[str, Any]]:
-    with open(filepath, "r") as config:
+def load_config() -> Dict[str, Any]:
+    with open(CONFIG_FILE, "r") as config:
         return json.load(config)
+
+
+def save_config(config: Dict[str, Any], filepath: Path) -> None:
+    with open(filepath, "w") as file:
+        json.dump(config, file)
 
 
 def count_parameters(module: Module) -> int:
     return sum(p.numel() for p in module.parameters())
+
+
+def count_layers(module: Module) -> int:
+    return len(list(module.named_modules()))
 
 
 def load_checkpoint(filepath: Path, model: Module) -> Module:

@@ -15,7 +15,6 @@ class ObjectDetectionDataset(Dataset):
         self.num_negative = sum(entry.is_negative for entry in entries)
         self.num_positive = len(entries) - self.num_negative
         self.num_x_cells, self.num_y_cells = config["grid"]
-
         self.transform = transforms
 
     def __len__(self) -> int:
@@ -25,7 +24,7 @@ class ObjectDetectionDataset(Dataset):
         image = Image.fromarray(self.entries[index].image)
         image = self.transform(image)
 
-        grid = torch.zeros((self.num_y_cells, self.num_x_cells, 5))
+        grid = torch.zeros((self.num_y_cells, self.num_x_cells, 3))
 
         for annotation in self.entries[index].annotations:
             x = self.num_x_cells * annotation.x
@@ -34,18 +33,12 @@ class ObjectDetectionDataset(Dataset):
             cell_row = int(y)
             cell_column = int(x)
 
-            cell_x = x - cell_column
-            cell_y = y - cell_row
-
-            cell_w = annotation.width * self.num_x_cells
-            cell_h = annotation.height * self.num_y_cells
-
             # One object per cell
             if grid[cell_row, cell_column, 0] == 0:
                 grid[cell_row, cell_column, 0] = 1
 
-                bbox = Tensor([cell_x, cell_y, cell_w, cell_h])
-                grid[cell_row, cell_column, 1: 5] = bbox
+                center = Tensor([x - cell_column, y - cell_row])
+                grid[cell_row, cell_column, 1:3] = center
 
         return image, grid
 
