@@ -62,7 +62,7 @@ class Trainer:
         self.best_score_metric = "F1"
         self.best_score = 0
 
-        self.detector = Detector(config, self.model)
+        self.detector = Detector(config, self.model, self.device)
 
     def fit(self) -> Module:
         for epoch in range(1, self.epochs + 1):

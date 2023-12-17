@@ -12,8 +12,9 @@ from src.utils import non_max_suppression
 
 
 class Detector:
-    def __init__(self, config: Dict[str, Any], model: Module):
+    def __init__(self, config: Dict[str, Any], model: Module, device: torch.device) -> None:
         self.model = model
+        self.device = device
         self.num_x_cells, self.num_y_cells = config["grid"]
         self.num_cells = self.num_x_cells * self.num_y_cells
 
@@ -29,6 +30,7 @@ class Detector:
     def detect(self, entry: ImageEntry, threshold: float = 0.5) -> ImageEntry:
         patches = entry_to_patches(entry, patch_size=self.image_size)
         source = torch.cat([self.transform(Image.fromarray(patch.image)).unsqueeze(0) for patch in patches], dim=0)
+        source = source.to(self.device)
         batch_size = source.shape[0]
 
         self.model.eval()
